@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
@@ -112,6 +113,22 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 	}
 
 	fmt.Printf("✅ Run success in %s with input %s (Time: %v)\n", fileName, inputFileName, elapsedTime)
+	return nil
+}
+
+func (g *Grader) VaildationSourceCode(fileName string, fileType string) error {
+	code, err := os.ReadFile(filepath.Join(g.pathOfSource, fileName+"."+fileType))
+	if err != nil {
+		return fmt.Errorf("❌ Error reading source code %s: %v", fileName, err)
+	}
+	includeRegex := regexp.MustCompile(`#include\s*[<"]([^>"]+)[>"]`)
+	matches := includeRegex.FindAllStringSubmatch(string(code), -1)
+
+	// แสดงรายการ Header ที่พบ
+	fmt.Println("🔍 Header Files ที่พบในโค้ด C++:")
+	for _, match := range matches {
+		fmt.Println(" -", match[1])
+	}
 	return nil
 }
 

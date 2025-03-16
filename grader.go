@@ -15,6 +15,8 @@ type Grader struct {
 	pathOfInput          string
 	pathOfOutput         string
 	pathOfExpectedOutput string
+	MaxTime              int
+	MaxMemory            int
 }
 
 func (g *Grader) getCommandCompile(fileName string, fileType string) (*exec.Cmd, error) {
@@ -60,11 +62,13 @@ func (g *Grader) getCommandRun(fileName string, fileType string) (*exec.Cmd, err
 	}
 }
 
-func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string) {
+func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string, maxTime int, maxMemory int) {
 	g.pathOfSource = pathOfSource
 	g.pathOfInput = pathOfInput
 	g.pathOfOutput = pathOfOutput
 	g.pathOfExpectedOutput = pathOfExpectedOutput
+	g.MaxTime = maxTime
+	g.MaxMemory = maxMemory
 }
 
 func (g *Grader) compileSource(fileName string, fileType string) error {
@@ -154,7 +158,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 	defer outputFile.Close()
 
 	// ตั้ง Time Limit 10 วินาที
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(g.MaxTime)*time.Second)
 	defer cancel()
 
 	// วัดเวลาเริ่มต้น
@@ -169,7 +173,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 
 	// เช็คว่าโปรแกรมถูกยกเลิกเพราะ Timeout หรือไม่
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("Timeout! %s took too long (>10s) with input %s", fileName, inputFileName)
+		return fmt.Errorf("Timeout! %s took too long (>%ds) with input %s", fileName, g.MaxTime, inputFileName)
 	}
 
 	if err != nil {

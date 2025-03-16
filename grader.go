@@ -15,35 +15,92 @@ type Grader struct {
 	pathOfInput          string
 	pathOfOutput         string
 	pathOfExpectedOutput string
+	MaxTime              int
+	MaxMemory            int
 }
 
-func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string) {
+func (g *Grader) getCommandCompile(fileName string, fileType string) (*exec.Cmd, error) {
+	sourceFile := filepath.Join(g.pathOfSource, fileName+"."+fileType)
+	outputFile := filepath.Join(g.pathOfSource, fileName)
+
+	switch fileType {
+	case "c":
+		return exec.Command("gcc", "-std=c11", sourceFile, "-o", outputFile), nil
+	case "c++":
+		return exec.Command("g++", "-std=c++14", sourceFile, "-o", outputFile), nil
+	case "cpp":
+		return exec.Command("g++", "-std=c++14", sourceFile, "-o", outputFile), nil
+	case "java":
+		return exec.Command("javac", sourceFile), nil
+	default:
+		return nil, fmt.Errorf("unsupported language %s", fileType)
+	}
+}
+
+func (g *Grader) getCommandRun(fileName string, fileType string) (*exec.Cmd, error) {
+	sourcePath := filepath.Join(g.pathOfSource, fileName)
+	sourceFile := sourcePath + "." + fileType
+
+	switch fileType {
+	case "c":
+		return exec.Command(sourcePath), nil
+	case "c++":
+		return exec.Command(sourcePath), nil
+	case "cpp":
+		return exec.Command(sourcePath), nil
+	case "java":
+		// For Java, use 'java' command with class name (filename without extension)
+		return exec.Command("java", "-cp", g.pathOfSource, fileName), nil
+	case "go":
+		// For Go, we can use 'go run' directly on the source file
+		return exec.Command("go", "run", sourceFile), nil
+	case "python":
+		// For Python, use 'python3' to run the script
+		return exec.Command("python3", sourceFile), nil
+	default:
+		return nil, fmt.Errorf("unsupported language %s", fileType)
+	}
+}
+
+func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string, maxTime int, maxMemory int) {
 	g.pathOfSource = pathOfSource
 	g.pathOfInput = pathOfInput
 	g.pathOfOutput = pathOfOutput
 	g.pathOfExpectedOutput = pathOfExpectedOutput
+	g.MaxTime = maxTime
+	g.MaxMemory = maxMemory
 }
 
-func (g *Grader) CompileSource(fileName string, fileType string) error {
-	sourceFile := filepath.Join(g.pathOfSource, fileName+"."+fileType)
-	outputFile := filepath.Join(g.pathOfSource, fileName)
+func (g *Grader) compileSource(fileName string, fileType string) error {
 
-	compileCmd := exec.Command("g++", "-o", outputFile, sourceFile)
-	if err := compileCmd.Run(); err != nil {
-		return fmt.Errorf("❌ Compile error in %s: %v", fileName, err)
+	compileCmd, err := g.getCommandCompile(fileName, fileType)
+	if err != nil {
+		return err
 	}
-
+	if err := compileCmd.Run(); err != nil {
+		return fmt.Errorf("Compile error in %s: %v", fileName, err)
+	}
 	fmt.Printf("✅ Compile success in %s\n", fileName)
 	return nil
 }
 
-func (g *Grader) RunSource(fileName string) error {
+func (g *Grader) RunSource(fileName string, fileType string) error {
+	var listOfCompile []string = []string{"cpp", "c", "java"}
+	for _, compileType := range listOfCompile {
+		if fileType == compileType {
+			if err := g.compileSource(fileName, fileType); err != nil {
+				return err
+			}
+			break
+		}
+	}
+
 	if err := g.ClearOutputFiles(); err != nil {
-		return fmt.Errorf("❌ Error clearing output files: %v", err)
+		return fmt.Errorf("Error clearing output files: %v", err)
 	}
 	files, err := os.ReadDir(g.pathOfInput)
 	if err != nil {
-		return fmt.Errorf("❌ Error reading input directory: %v", err)
+		return fmt.Errorf("Error reading input directory: %v", err)
 	}
 
 	var wg sync.WaitGroup
@@ -90,18 +147,18 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 	outputFilePath := filepath.Join(g.pathOfOutput, inputFileName[:len(inputFileName)-2]+"sol")
 	inputFile, err := os.Open(inputFilePath)
 	if err != nil {
-		return fmt.Errorf("❌ Error opening input file %s: %v", inputFileName, err)
+		return fmt.Errorf("Error opening input file %s: %v", inputFileName, err)
 	}
 	defer inputFile.Close()
 
 	outputFile, err := os.Create(outputFilePath)
 	if err != nil {
-		return fmt.Errorf("❌ Error reading output file %s: %v", inputFileName, err)
+		return fmt.Errorf("Error reading output file %s: %v", inputFileName, err)
 	}
 	defer outputFile.Close()
 
 	// ตั้ง Time Limit 10 วินาที
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(g.MaxTime)*time.Second)
 	defer cancel()
 
 	// วัดเวลาเริ่มต้น
@@ -116,11 +173,11 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 
 	// เช็คว่าโปรแกรมถูกยกเลิกเพราะ Timeout หรือไม่
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("❌ Timeout! %s took too long (>10s) with input %s", fileName, inputFileName)
+		return fmt.Errorf("Timeout! %s took too long (>%ds) with input %s", fileName, g.MaxTime, inputFileName)
 	}
 
 	if err != nil {
-		return fmt.Errorf("❌ Run error in %s with input %s: %v", fileName, inputFileName, err)
+		return fmt.Errorf("Run error in %s with input %s: %v", fileName, inputFileName, err)
 	}
 
 	fmt.Printf("✅ Run success in %s with input %s (Time: %v)\n", fileName, inputFileName, elapsedTime)
@@ -164,13 +221,13 @@ func (g *Grader) CheckOutput_StringMathcing() {
 func (g *Grader) ClearOutputFiles() error {
 	files, err := os.ReadDir(g.pathOfOutput)
 	if err != nil {
-		return fmt.Errorf("❌ Error reading output directory: %v", err)
+		return fmt.Errorf("Error reading output directory: %v", err)
 	}
 
 	for _, file := range files {
 		filePath := filepath.Join(g.pathOfOutput, file.Name())
 		if err := os.Remove(filePath); err != nil {
-			return fmt.Errorf("❌ Error deleting file %s: %v", filePath, err)
+			return fmt.Errorf("Error deleting file %s: %v", filePath, err)
 		}
 	}
 

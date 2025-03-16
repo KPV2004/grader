@@ -15,6 +15,8 @@ type Grader struct {
 	pathOfInput          string
 	pathOfOutput         string
 	pathOfExpectedOutput string
+	sourceFile           string
+	typeFile             string
 	MaxTime              int
 	MaxMemory            int
 }
@@ -37,42 +39,45 @@ func (g *Grader) getCommandCompile(fileName string, fileType string) (*exec.Cmd,
 	}
 }
 
-func (g *Grader) getCommandRun(fileName string, fileType string) (*exec.Cmd, error) {
+func (g *Grader) getCommandRun(ctx context.Context, fileName string, fileType string) (*exec.Cmd, error) {
 	sourcePath := filepath.Join(g.pathOfSource, fileName)
 	sourceFile := sourcePath + "." + fileType
 
 	switch fileType {
 	case "c":
-		return exec.Command(sourcePath), nil
+		return exec.CommandContext(ctx, sourcePath), nil
 	case "c++":
-		return exec.Command(sourcePath), nil
+		return exec.CommandContext(ctx, sourcePath), nil
 	case "cpp":
-		return exec.Command(sourcePath), nil
+		return exec.CommandContext(ctx, sourcePath), nil
 	case "java":
 		// For Java, use 'java' command with class name (filename without extension)
-		return exec.Command("java", "-cp", g.pathOfSource, fileName), nil
+		return exec.CommandContext(ctx, "java", "-cp", g.pathOfSource, fileName), nil
 	case "go":
 		// For Go, we can use 'go run' directly on the source file
-		return exec.Command("go", "run", sourceFile), nil
+		return exec.CommandContext(ctx, "go", "run", sourceFile), nil
 	case "python":
 		// For Python, use 'python3' to run the script
-		return exec.Command("python3", sourceFile), nil
+		return exec.CommandContext(ctx, "python3", sourceFile), nil
 	default:
 		return nil, fmt.Errorf("unsupported language %s", fileType)
 	}
 }
 
-func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string, maxTime int, maxMemory int) {
+func (g *Grader) InitGrader(pathOfSource string, pathOfInput string, pathOfOutput string, pathOfExpectedOutput string, maxTime int, maxMemory int, filename string, filetype string) {
 	g.pathOfSource = pathOfSource
 	g.pathOfInput = pathOfInput
 	g.pathOfOutput = pathOfOutput
 	g.pathOfExpectedOutput = pathOfExpectedOutput
+	g.sourceFile = filename
+	g.typeFile = filetype
 	g.MaxTime = maxTime
 	g.MaxMemory = maxMemory
 }
 
-func (g *Grader) compileSource(fileName string, fileType string) error {
-
+func (g *Grader) compileSource() error {
+	fileName := g.sourceFile
+	fileType := g.typeFile
 	compileCmd, err := g.getCommandCompile(fileName, fileType)
 	if err != nil {
 		return err
@@ -84,11 +89,12 @@ func (g *Grader) compileSource(fileName string, fileType string) error {
 	return nil
 }
 
-func (g *Grader) RunSource(fileName string, fileType string) error {
+func (g *Grader) RunSource() error {
+	fileType := g.typeFile
 	var listOfCompile []string = []string{"cpp", "c", "java"}
 	for _, compileType := range listOfCompile {
 		if fileType == compileType {
-			if err := g.compileSource(fileName, fileType); err != nil {
+			if err := g.compileSource(); err != nil {
 				return err
 			}
 			break
@@ -111,7 +117,7 @@ func (g *Grader) RunSource(fileName string, fileType string) error {
 	for i := 0; i < 10; i++ {
 		go func() {
 			for inputFileName := range jobs {
-				if err := g.runSingleTest(fileName, inputFileName); err != nil {
+				if err := g.runSingleTest(inputFileName); err != nil {
 					errChan <- err
 				}
 				wg.Done()
@@ -141,7 +147,8 @@ func (g *Grader) RunSource(fileName string, fileType string) error {
 	return finalErr
 }
 
-func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
+func (g *Grader) runSingleTest(inputFileName string) error {
+	fileName := g.sourceFile
 
 	inputFilePath := filepath.Join(g.pathOfInput, inputFileName)
 	outputFilePath := filepath.Join(g.pathOfOutput, inputFileName[:len(inputFileName)-2]+"sol")
@@ -173,7 +180,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 
 	// เช็คว่าโปรแกรมถูกยกเลิกเพราะ Timeout หรือไม่
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("Timeout! %s took too long (>%ds) with input %s", fileName, g.MaxTime, inputFileName)
+		return fmt.Errorf("Timeout! %s took too long (>%ds) with input %s (Time: %v)", fileName, g.MaxTime, inputFileName, elapsedTime)
 	}
 
 	if err != nil {

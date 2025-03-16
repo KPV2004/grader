@@ -7,7 +7,9 @@ import (
 	"regexp"
 )
 
-func (g *Grader) GetHeaderC_Cpp(fileName string, fileType string) ([]string, error) {
+func (g *Grader) GetHeaderC_Cpp() ([]string, error) {
+	fileName := g.sourceFile
+	fileType := g.typeFile
 	if fileType != "c" && fileType != "cpp" {
 		return nil, fmt.Errorf("❌ Error file type %s: %v", fileType)
 	}
@@ -31,7 +33,10 @@ func (g *Grader) GetHeaderC_Cpp(fileName string, fileType string) ([]string, err
 	return headerList, nil
 }
 
-func (g *Grader) ValidationSourceCodeByRegex(fileName string, fileType string, regexCmd string) ([]string, error) {
+func (g *Grader) ValidationSourceCodeByRegex(regexCmd string) ([]string, error) {
+	fileName := g.sourceFile
+	fileType := g.typeFile
+
 	code, err := os.ReadFile(filepath.Join(g.pathOfSource, fileName+"."+fileType))
 	if err != nil {
 		return nil, fmt.Errorf("❌ Error reading source code %s: %v", fileName, err)

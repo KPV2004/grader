@@ -1,10 +1,8 @@
 package grader
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,30 +37,42 @@ func (g *Grader) CompileSource(fileName string, fileType string) error {
 	fmt.Printf("✅ Compile success in %s\n", fileName)
 	return nil
 }
-
 func (g *Grader) RunSource(fileName string) error {
+	if err := g.ClearOutputFiles(); err != nil {
+		return fmt.Errorf("❌ Error clearing output files: %v", err)
+	}
 	files, err := os.ReadDir(g.pathOfInput)
 	if err != nil {
 		return fmt.Errorf("❌ Error reading input directory: %v", err)
 	}
 
 	var wg sync.WaitGroup
-	errChan := make(chan error, len(files)) // Buffered channel to collect errors
+	errChan := make(chan error, len(files)) // Channel เก็บ Error
+	jobs := make(chan string, 10)           // จำกัดให้รันไม่เกิน 10 งานพร้อมกัน
 
-	for _, file := range files {
-		wg.Add(1)
-		go func(inputFileName string) {
-			defer wg.Done()
-			if err := g.runSingleTest(fileName, inputFileName); err != nil {
-				errChan <- err
+	// 🔥 สร้าง Worker Pool (รันได้สูงสุด 10 งานพร้อมกัน)
+	for i := 0; i < 10; i++ {
+		go func() {
+			for inputFileName := range jobs {
+				if err := g.runSingleTest(fileName, inputFileName); err != nil {
+					errChan <- err
+				}
+				wg.Done()
 			}
-		}(file.Name())
+		}()
 	}
 
-	wg.Wait()
+	// 🔹 ส่งไฟล์เข้า Queue (jobs)
+	for _, file := range files {
+		wg.Add(1)
+		jobs <- file.Name()
+	}
+	close(jobs) // ปิด Channel หลังจากใส่งานหมดแล้ว
+
+	wg.Wait() // รอให้ทุก Worker ทำงานเสร็จ
 	close(errChan)
 
-	// Aggregate errors
+	// ✅ รวม Error ทั้งหมด
 	var finalErr error
 	for err := range errChan {
 		if finalErr == nil {
@@ -75,8 +85,9 @@ func (g *Grader) RunSource(fileName string) error {
 }
 
 func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
+
 	inputFilePath := filepath.Join(g.pathOfInput, inputFileName)
-	outputFilePath := filepath.Join(g.pathOfOutput, inputFileName+".out")
+	outputFilePath := filepath.Join(g.pathOfOutput, inputFileName[:len(inputFileName)-2]+"sol")
 	inputFile, err := os.Open(inputFilePath)
 	if err != nil {
 		return fmt.Errorf("❌ Error opening input file %s: %v", inputFileName, err)
@@ -85,7 +96,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 
 	outputFile, err := os.Create(outputFilePath)
 	if err != nil {
-		return fmt.Errorf("❌ Error creating output file %s: %v", outputFilePath, err)
+		return fmt.Errorf("❌ Error reading output file %s: %v", inputFileName, err)
 	}
 	defer outputFile.Close()
 
@@ -99,7 +110,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 	runCmd := exec.CommandContext(ctx, filepath.Join(g.pathOfSource, fileName))
 	runCmd.Stdin = inputFile
 	runCmd.Stdout = outputFile
-
+	// output, err := runCmd.CombinedOutput()
 	err = runCmd.Run()
 	elapsedTime := time.Since(startTime)
 
@@ -113,6 +124,7 @@ func (g *Grader) runSingleTest(fileName string, inputFileName string) error {
 	}
 
 	fmt.Printf("✅ Run success in %s with input %s (Time: %v)\n", fileName, inputFileName, elapsedTime)
+
 	return nil
 }
 
@@ -132,70 +144,52 @@ func (g *Grader) VaildationSourceCode(fileName string, fileType string) error {
 	return nil
 }
 
-func (g *Grader) CheckOutput(fileName string) error {
-	files, err := os.ReadDir(g.pathOfExpectedOutput)
+func (g *Grader) CheckOutput_StringMathcing() {
+	files, err := os.ReadDir(g.pathOfOutput)
 	if err != nil {
-		return fmt.Errorf("❌ Error reading expected output directory: %v", err)
+		fmt.Println("❌ Error reading output directory:", err)
+		return
 	}
-
-	var wg sync.WaitGroup
-	errChan := make(chan error, len(files)) // Buffered channel for errors
 
 	for _, file := range files {
-		wg.Add(1)
-		go func(expectedFileName string) {
-			defer wg.Done()
-			if err := g.compareOutput(expectedFileName); err != nil {
-				errChan <- err
-			}
-		}(file.Name())
-	}
+		outputFileName := file.Name()
+		outputFilePath := filepath.Join(g.pathOfOutput, outputFileName)
+		expectedOutputFilePath := filepath.Join(g.pathOfExpectedOutput, outputFileName)
 
-	wg.Wait()
-	close(errChan)
+		outputFile, err := os.ReadFile(outputFilePath)
+		if err != nil {
+			fmt.Println("❌ Error reading output file:", err)
+			return
+		}
 
-	// Aggregate errors
-	var finalErr error
-	for err := range errChan {
-		if finalErr == nil {
-			finalErr = err
+		expectedOutputFile, err := os.ReadFile(expectedOutputFilePath)
+		if err != nil {
+			fmt.Println("❌ Error reading expected output file:", err)
+			return
+		}
+
+		if string(outputFile) == string(expectedOutputFile) {
+			fmt.Printf("✅ Test %s passed\n", outputFileName)
 		} else {
-			finalErr = fmt.Errorf("%v\n%v", finalErr, err)
+			fmt.Printf("❌ Test %s failed\n", outputFileName)
 		}
 	}
-	return finalErr
+
 }
 
-func (g *Grader) compareOutput(expectedFileName string) error {
-	expectedFilePath := filepath.Join(g.pathOfExpectedOutput, expectedFileName)
-	outputFilePath := filepath.Join(g.pathOfOutput, expectedFileName+".out")
-
-	expectedFile, err := os.Open(expectedFilePath)
+func (g *Grader) ClearOutputFiles() error {
+	files, err := os.ReadDir(g.pathOfOutput)
 	if err != nil {
-		return fmt.Errorf("❌ Error opening expected output file %s: %v", expectedFileName, err)
-	}
-	defer expectedFile.Close()
-
-	outputFile, err := os.Open(outputFilePath)
-	if err != nil {
-		return fmt.Errorf("❌ Error opening output file %s: %v", expectedFileName+".out", err)
-	}
-	defer outputFile.Close()
-
-	expectedContent, err := io.ReadAll(expectedFile)
-	if err != nil {
-		return fmt.Errorf("❌ Error reading expected output file %s: %v", expectedFileName, err)
+		return fmt.Errorf("❌ Error reading output directory: %v", err)
 	}
 
-	outputContent, err := io.ReadAll(outputFile)
-	if err != nil {
-		return fmt.Errorf("❌ Error reading output file %s: %v", expectedFileName+".out", err)
+	for _, file := range files {
+		filePath := filepath.Join(g.pathOfOutput, file.Name())
+		if err := os.Remove(filePath); err != nil {
+			return fmt.Errorf("❌ Error deleting file %s: %v", filePath, err)
+		}
 	}
 
-	if !bytes.Equal(bytes.TrimSpace(expectedContent), bytes.TrimSpace(outputContent)) {
-		return fmt.Errorf("❌ Output mismatch for %s", expectedFileName)
-	}
-
-	fmt.Printf("✅ Output matches for %s\n", expectedFileName)
+	fmt.Println("✅ All output files deleted successfully")
 	return nil
 }
